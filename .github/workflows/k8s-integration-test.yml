@@ -1,0 +1,559 @@
+name: Kubernetes Integration Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  k8s-integration:
+    name: Full K8s Deployment Test with Vault
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: 'maven'
+
+    - name: Build Maven project
+      run: mvn clean package -DskipTests -B
+
+    - name: Set up Minikube
+      uses: medyagh/setup-minikube@latest
+      with:
+        minikube-version: latest
+        driver: docker
+        cpus: 2
+        memory: 4096
+        kubernetes-version: v1.28.0
+
+    - name: Verify Kubernetes cluster
+      run: |
+        kubectl cluster-info
+        kubectl get nodes -o wide
+        minikube status
+
+        echo ""
+        echo "=== Minikube Profile Info ==="
+        minikube profile list
+
+        echo ""
+        echo "=== Minikube System Info ==="
+        kubectl top nodes || echo "Metrics not available yet"
+
+    - name: Make scripts executable
+      run: chmod +x k8s/scripts/*.sh
+
+    - name: Generate certificates
+      run: |
+        cd k8s/scripts
+        bash generate-certs.sh
+
+    - name: Build Docker images
+      run: |
+        # Build images on host
+        docker build -t app-a:1.0.0-SNAPSHOT -f k8s/Dockerfile-app-a .
+        docker build -t app-b:1.0.0-SNAPSHOT -f k8s/Dockerfile-app-b .
+
+        echo "=== Built images on host ==="
+        docker images | grep app-
+
+    - name: Load images into Minikube
+      run: |
+        # Load images explicitly into minikube
+        echo "Loading app-a image..."
+        minikube image load app-a:1.0.0-SNAPSHOT
+
+        echo "Loading app-b image..."
+        minikube image load app-b:1.0.0-SNAPSHOT
+
+        echo "=== Images in Minikube ==="
+        minikube image ls | grep app-
+
+    - name: Verify images are in Minikube
+      run: |
+        # Verify both images are loaded
+        if ! minikube image ls | grep -q "app-a:1.0.0-SNAPSHOT"; then
+          echo "ERROR: app-a image not found in Minikube!"
+          exit 1
+        fi
+
+        if ! minikube image ls | grep -q "app-b:1.0.0-SNAPSHOT"; then
+          echo "ERROR: app-b image not found in Minikube!"
+          exit 1
+        fi
+
+        echo "Both images verified in Minikube"
+
+    - name: Deploy Vault
+      run: |
+        echo "=== Deploying Vault ==="
+        kubectl apply -f k8s/manifests/vault-deployment.yaml
+        kubectl apply -f k8s/manifests/vault-service.yaml
+
+        echo "Checking Vault pod creation..."
+        sleep 10
+        kubectl get pods -l app=vault
+
+        echo "=== Vault Pod Details ==="
+        VAULT_POD=$(kubectl get pod -l app=vault -o jsonpath='{.items[0].metadata.name}' || echo "")
+        if [ ! -z "$VAULT_POD" ]; then
+          echo "Vault pod: $VAULT_POD"
+          kubectl describe pod $VAULT_POD
+          echo ""
+          echo "=== Vault Container Logs ==="
+          kubectl logs $VAULT_POD --tail=50 || echo "No logs yet"
+        fi
+
+        echo ""
+        echo "Waiting for Vault to be ready (timeout: 180s)..."
+        if kubectl wait --for=condition=ready pod -l app=vault --timeout=180s; then
+          echo "✓ Vault is ready"
+        else
+          echo "✗ Vault failed to become ready"
+          echo "=== Final Pod Status ==="
+          kubectl get pods -l app=vault -o wide
+          echo ""
+          echo "=== Final Pod Logs ==="
+          kubectl logs -l app=vault --tail=100 || echo "No logs available"
+          exit 1
+        fi
+
+        echo "=== Vault Pod Status ==="
+        kubectl get pods -l app=vault
+
+    - name: Initialize Vault
+      run: |
+        echo "=== Initializing Vault ==="
+        cd k8s/scripts
+        bash init-vault.sh
+
+    - name: Upload certificates to Vault
+      run: |
+        echo "=== Uploading certificates to Vault ==="
+        cd k8s/scripts
+        bash upload-certs-to-vault.sh
+
+    - name: Debug - Verify certificate integrity in Vault
+      run: |
+        VAULT_POD=$(kubectl get pod -l app=vault -o jsonpath="{.items[0].metadata.name}")
+
+        echo "=== Certificate Integrity Check ==="
+        echo ""
+
+        echo "1. Original certificate file sizes:"
+        ls -lh k8s/certs/app-a-keystore.p12
+        ls -lh k8s/certs/app-b-keystore.p12
+        ls -lh k8s/certs/truststore.jks
+
+        ORIGINAL_APP_A_SIZE=$(stat -c%s k8s/certs/app-a-keystore.p12)
+        ORIGINAL_TRUSTSTORE_SIZE=$(stat -c%s k8s/certs/truststore.jks)
+        echo ""
+
+        echo "2. Base64 encoded sizes (expected):"
+        EXPECTED_APP_A_B64=$(base64 -w 0 k8s/certs/app-a-keystore.p12 | wc -c)
+        EXPECTED_TRUSTSTORE_B64=$(base64 -w 0 k8s/certs/truststore.jks | wc -c)
+        echo "   app-a keystore: $EXPECTED_APP_A_B64 characters"
+        echo "   truststore: $EXPECTED_TRUSTSTORE_B64 characters"
+        echo ""
+
+        echo "3. Sizes stored in Vault:"
+        VAULT_APP_A_B64=$(kubectl exec $VAULT_POD -- env VAULT_TOKEN=root vault kv get -format=json secret/app-a | jq -r '.data.data."ssl.keystore"' | wc -c)
+        VAULT_TRUSTSTORE_B64=$(kubectl exec $VAULT_POD -- env VAULT_TOKEN=root vault kv get -format=json secret/app-a | jq -r '.data.data."ssl.truststore"' | wc -c)
+        echo "   app-a keystore: $VAULT_APP_A_B64 characters"
+        echo "   truststore: $VAULT_TRUSTSTORE_B64 characters"
+        echo ""
+
+        echo "4. Comparing sizes:"
+        if [ "$EXPECTED_APP_A_B64" -eq "$VAULT_APP_A_B64" ]; then
+          echo "   ✓ app-a keystore size MATCHES"
+        else
+          echo "   ✗ app-a keystore size MISMATCH (expected: $EXPECTED_APP_A_B64, got: $VAULT_APP_A_B64)"
+        fi
+
+        if [ "$EXPECTED_TRUSTSTORE_B64" -eq "$VAULT_TRUSTSTORE_B64" ]; then
+          echo "   ✓ truststore size MATCHES"
+        else
+          echo "   ✗ truststore size MISMATCH (expected: $EXPECTED_TRUSTSTORE_B64, got: $VAULT_TRUSTSTORE_B64)"
+        fi
+        echo ""
+
+        echo "5. Test decoding from Vault:"
+        kubectl exec $VAULT_POD -- env VAULT_TOKEN=root vault kv get -format=json secret/app-a | \
+          jq -r '.data.data."ssl.keystore"' | base64 -d > /tmp/test-keystore.p12
+
+        DECODED_SIZE=$(stat -c%s /tmp/test-keystore.p12)
+        echo "   Decoded keystore size: $DECODED_SIZE bytes"
+
+        if [ "$ORIGINAL_APP_A_SIZE" -eq "$DECODED_SIZE" ]; then
+          echo "   ✓ Decoded size MATCHES original"
+        else
+          echo "   ✗ Decoded size MISMATCH (expected: $ORIGINAL_APP_A_SIZE, got: $DECODED_SIZE)"
+        fi
+        echo ""
+
+        echo "6. Verify PKCS12 validity:"
+        if openssl pkcs12 -info -in /tmp/test-keystore.p12 -passin pass:changeit -noout 2>&1 | grep -q "MAC:"; then
+          echo "   ✓ Decoded file is VALID PKCS12"
+        else
+          echo "   ✗ Decoded file is INVALID PKCS12"
+          echo "   First 32 bytes (hex):"
+          od -An -tx1 -N 32 /tmp/test-keystore.p12
+        fi
+        echo ""
+
+        echo "7. First bytes comparison:"
+        echo "   Original first 16 bytes:"
+        od -An -tx1 -N 16 k8s/certs/app-a-keystore.p12
+        echo "   Decoded first 16 bytes:"
+        od -An -tx1 -N 16 /tmp/test-keystore.p12
+
+        rm -f /tmp/test-keystore.p12
+
+    - name: Verify Vault secrets
+      run: |
+        VAULT_POD=$(kubectl get pod -l app=vault -o jsonpath="{.items[0].metadata.name}")
+        echo "Verifying secrets in Vault..."
+        kubectl exec $VAULT_POD -- env VAULT_TOKEN=root vault kv list secret/ || true
+
+    - name: Deploy services
+      run: |
+        kubectl apply -f k8s/manifests/app-a-service.yaml
+        kubectl apply -f k8s/manifests/app-b-service.yaml
+
+    - name: Deploy App A
+      run: |
+        kubectl apply -f k8s/manifests/app-a-deployment.yaml
+        # Apply CI-specific patch for image pull policy
+        kubectl patch deployment app-a -p '{"spec":{"template":{"spec":{"containers":[{"name":"app-a","imagePullPolicy":"Never"}]}}}}'
+
+    - name: Deploy App B
+      run: |
+        kubectl apply -f k8s/manifests/app-b-deployment.yaml
+        # Apply CI-specific patch for image pull policy
+        kubectl patch deployment app-b -p '{"spec":{"template":{"spec":{"containers":[{"name":"app-b","imagePullPolicy":"Never"}]}}}}'
+
+    - name: Check initial pod status
+      run: |
+        echo "Sleeping 20 seconds to let pods start..."
+        sleep 20
+
+        echo "=== Initial Pod Status ==="
+        kubectl get pods -o wide
+
+        echo ""
+        echo "=== Pod Container Status ==="
+        for pod in $(kubectl get pods -l 'app in (app-a,app-b)' -o jsonpath='{.items[*].metadata.name}'); do
+          echo "Pod: $pod"
+          kubectl get pod $pod -o jsonpath='{.status.containerStatuses[0].state}' | jq '.'
+          echo ""
+        done
+
+        echo ""
+        echo "=== Recent Events ==="
+        kubectl get events --sort-by='.lastTimestamp' | tail -30
+
+    - name: Debug - Check init container logs and certificate files
+      run: |
+        echo "=== Init Container Certificate Download Debug ==="
+        echo ""
+
+        POD_A=$(kubectl get pod -l app=app-a -o jsonpath='{.items[0].metadata.name}' || echo "")
+        POD_B=$(kubectl get pod -l app=app-b -o jsonpath='{.items[0].metadata.name}' || echo "")
+
+        if [ ! -z "$POD_A" ]; then
+          echo "1. App A init container logs:"
+          kubectl logs $POD_A -c vault-init || echo "Init container not found or not completed"
+          echo ""
+
+          echo "2. App A certificate files (if container is running):"
+          kubectl exec $POD_A -c app-a -- ls -lh /etc/security/ssl/ 2>/dev/null || echo "Container not running yet"
+          echo ""
+
+          echo "3. App A certificate file types:"
+          kubectl exec $POD_A -c app-a -- file /etc/security/ssl/app-a-keystore.p12 2>/dev/null || echo "Cannot check file type"
+          kubectl exec $POD_A -c app-a -- file /etc/security/ssl/truststore.jks 2>/dev/null || echo "Cannot check file type"
+          echo ""
+
+          echo "4. App A certificate first bytes:"
+          kubectl exec $POD_A -c app-a -- od -An -tx1 -N 16 /etc/security/ssl/app-a-keystore.p12 2>/dev/null || echo "Cannot read file"
+          echo ""
+        fi
+
+        if [ ! -z "$POD_B" ]; then
+          echo "5. App B init container logs:"
+          kubectl logs $POD_B -c vault-init || echo "Init container not found or not completed"
+          echo ""
+
+          echo "6. App B certificate files (if container is running):"
+          kubectl exec $POD_B -c app-b -- ls -lh /etc/security/ssl/ 2>/dev/null || echo "Container not running yet"
+          echo ""
+        fi
+
+    - name: Wait for deployments to be ready
+      run: |
+        echo "Waiting for deployments (up to 5 minutes)..."
+
+        # Wait for app-a
+        if kubectl wait --for=condition=available --timeout=300s deployment/app-a; then
+          echo "✓ App A is ready"
+        else
+          echo "✗ App A deployment timeout - investigating..."
+
+          POD_A=$(kubectl get pod -l app=app-a -o jsonpath='{.items[0].metadata.name}')
+          if [ ! -z "$POD_A" ]; then
+            echo "=== App A Pod Status ==="
+            kubectl get pod $POD_A -o wide
+
+            echo ""
+            echo "=== App A Pod Describe ==="
+            kubectl describe pod $POD_A
+
+            echo ""
+            echo "=== App A Container Logs ==="
+            kubectl logs $POD_A --tail=100 || echo "No logs available"
+          fi
+
+          echo ""
+          echo "=== App A Deployment ==="
+          kubectl describe deployment app-a
+        fi
+
+        # Wait for app-b
+        if kubectl wait --for=condition=available --timeout=300s deployment/app-b; then
+          echo "✓ App B is ready"
+        else
+          echo "✗ App B deployment timeout - investigating..."
+
+          POD_B=$(kubectl get pod -l app=app-b -o jsonpath='{.items[0].metadata.name}')
+          if [ ! -z "$POD_B" ]; then
+            echo "=== App B Pod Status ==="
+            kubectl get pod $POD_B -o wide
+
+            echo ""
+            echo "=== App B Pod Describe ==="
+            kubectl describe pod $POD_B
+
+            echo ""
+            echo "=== App B Container Logs ==="
+            kubectl logs $POD_B --tail=100 || echo "No logs available"
+          fi
+
+          echo ""
+          echo "=== App B Deployment ==="
+          kubectl describe deployment app-b
+        fi
+
+    - name: Debug - Check images in Minikube
+      if: always()
+      run: |
+        echo "=== Docker images via minikube docker-env ==="
+        eval $(minikube -p minikube docker-env)
+        docker images | grep -E "(app-a|app-b|REPOSITORY)"
+
+    - name: Check deployment status
+      if: always()
+      run: |
+        echo "=== Pods ==="
+        kubectl get pods -o wide
+        echo ""
+        echo "=== Pod Events ==="
+        kubectl get events --sort-by='.lastTimestamp' | grep -E "(app-a|app-b)" || echo "No pod events"
+        echo ""
+        echo "=== Services ==="
+        kubectl get services
+        echo ""
+        echo "=== Deployments ==="
+        kubectl get deployments
+
+    - name: Show Vault logs
+      if: always()
+      run: |
+        echo "=== Vault Logs ==="
+        kubectl logs -l app=vault --tail=100 || echo "No logs available"
+
+    - name: Show App A logs
+      if: always()
+      run: |
+        echo "=== App A Logs ==="
+        kubectl logs -l app=app-a --tail=100 || echo "No logs available"
+
+    - name: Show App B logs
+      if: always()
+      run: |
+        echo "=== App B Logs ==="
+        kubectl logs -l app=app-b --tail=100 || echo "No logs available"
+
+    - name: Describe App A pod
+      if: always()
+      run: |
+        POD_A=$(kubectl get pod -l app=app-a -o jsonpath='{.items[0].metadata.name}')
+        if [ ! -z "$POD_A" ]; then
+          kubectl describe pod $POD_A
+        fi
+
+    - name: Describe App B pod
+      if: always()
+      run: |
+        POD_B=$(kubectl get pod -l app=app-b -o jsonpath='{.items[0].metadata.name}')
+        if [ ! -z "$POD_B" ]; then
+          kubectl describe pod $POD_B
+        fi
+
+    - name: Test App A health endpoint
+      run: |
+        POD_A=$(kubectl get pod -l app=app-a -o jsonpath='{.items[0].metadata.name}')
+        if [ -z "$POD_A" ]; then
+          echo "✗ ERROR: Pod not found"
+          exit 1
+        fi
+
+        echo "Testing App A health endpoint with mTLS..."
+        RESPONSE=$(kubectl exec $POD_A -- curl -k -f --cert /etc/security/ssl/app-a-keystore.p12:changeit --cert-type P12 https://localhost:8443/health 2>&1)
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+          echo "✗ FAILED: Exit code $EXIT_CODE"
+          echo "Response: $RESPONSE"
+          exit 1
+        fi
+        echo "✓ PASSED: $RESPONSE"
+
+    - name: Test App B health endpoint
+      run: |
+        POD_B=$(kubectl get pod -l app=app-b -o jsonpath='{.items[0].metadata.name}')
+        if [ -z "$POD_B" ]; then
+          echo "✗ ERROR: Pod not found"
+          exit 1
+        fi
+
+        echo "Testing App B health endpoint with mTLS..."
+        RESPONSE=$(kubectl exec $POD_B -- curl -k -f --cert /etc/security/ssl/app-b-keystore.p12:changeit --cert-type P12 https://localhost:8443/health 2>&1)
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+          echo "✗ FAILED: Exit code $EXIT_CODE"
+          echo "Response: $RESPONSE"
+          exit 1
+        fi
+        echo "✓ PASSED: $RESPONSE"
+
+    - name: Test direct mTLS with curl (A to B)
+      run: |
+        POD_A=$(kubectl get pod -l app=app-a -o jsonpath='{.items[0].metadata.name}')
+        if [ -z "$POD_A" ]; then
+          echo "✗ ERROR: Pod not found"
+          exit 1
+        fi
+
+        echo "=== Testing from inside Pod A: curl → App B /api/greet ==="
+        echo "Using curl with App A's certificate"
+        RESPONSE=$(kubectl exec $POD_A -- curl -k -f --cert /etc/security/ssl/app-a-keystore.p12:changeit --cert-type P12 https://app-b.default.svc.cluster.local:8443/api/greet 2>&1)
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+          echo "✗ FAILED: Exit code $EXIT_CODE"
+          echo "Response: $RESPONSE"
+          exit 1
+        fi
+        echo "✓ PASSED: $RESPONSE"
+
+    - name: Test direct mTLS with curl (B to A)
+      run: |
+        POD_B=$(kubectl get pod -l app=app-b -o jsonpath='{.items[0].metadata.name}')
+        if [ -z "$POD_B" ]; then
+          echo "✗ ERROR: Pod not found"
+          exit 1
+        fi
+
+        echo "=== Testing from inside Pod B: curl → App A /api/greet ==="
+        echo "Using curl with App B's certificate"
+        RESPONSE=$(kubectl exec $POD_B -- curl -k -f --cert /etc/security/ssl/app-b-keystore.p12:changeit --cert-type P12 https://app-a.default.svc.cluster.local:8443/api/greet 2>&1)
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+          echo "✗ FAILED: Exit code $EXIT_CODE"
+          echo "Response: $RESPONSE"
+          exit 1
+        fi
+        echo "✓ PASSED: $RESPONSE"
+
+    - name: Test application RestTemplate (A to B)
+      run: |
+        POD_A=$(kubectl get pod -l app=app-a -o jsonpath='{.items[0].metadata.name}')
+        if [ -z "$POD_A" ]; then
+          echo "✗ ERROR: Pod not found"
+          exit 1
+        fi
+
+        echo "=== Testing from inside Pod A: curl → localhost:8443/api/call-app-b ==="
+        echo "This triggers App A's Java code to use RestTemplate → App B"
+        RESPONSE=$(kubectl exec $POD_A -- curl -k -f --cert /etc/security/ssl/app-a-keystore.p12:changeit --cert-type P12 https://localhost:8443/api/call-app-b 2>&1)
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+          echo "✗ FAILED: RestTemplate test failed with exit code $EXIT_CODE"
+          echo "Response: $RESPONSE"
+          echo ""
+          echo "=== Checking App A logs for RestTemplate errors ==="
+          kubectl logs -l app=app-a --tail=30
+          exit 1
+        fi
+
+        # Check if response contains error
+        if echo "$RESPONSE" | grep -qi "error"; then
+          echo "✗ FAILED: Response contains error"
+          echo "Response: $RESPONSE"
+          exit 1
+        fi
+
+        echo "✓ PASSED: $RESPONSE"
+
+    - name: Test application RestTemplate (B to A)
+      run: |
+        POD_B=$(kubectl get pod -l app=app-b -o jsonpath='{.items[0].metadata.name}')
+        if [ -z "$POD_B" ]; then
+          echo "✗ ERROR: Pod not found"
+          exit 1
+        fi
+
+        echo "=== Testing from inside Pod B: curl → localhost:8443/api/call-app-a ==="
+        echo "This triggers App B's Java code to use RestTemplate → App A"
+        RESPONSE=$(kubectl exec $POD_B -- curl -k -f --cert /etc/security/ssl/app-b-keystore.p12:changeit --cert-type P12 https://localhost:8443/api/call-app-a 2>&1)
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+          echo "✗ FAILED: RestTemplate test failed with exit code $EXIT_CODE"
+          echo "Response: $RESPONSE"
+          echo ""
+          echo "=== Checking App B logs for RestTemplate errors ==="
+          kubectl logs -l app=app-b --tail=30
+          exit 1
+        fi
+
+        # Check if response contains error
+        if echo "$RESPONSE" | grep -qi "error"; then
+          echo "✗ FAILED: Response contains error"
+          echo "Response: $RESPONSE"
+          exit 1
+        fi
+
+        echo "✓ PASSED: $RESPONSE"
+
+    - name: Cleanup
+      if: always()
+      run: |
+        kubectl delete deployment app-a app-b vault --ignore-not-found=true
+        kubectl delete service app-a app-b vault --ignore-not-found=true
+        kubectl delete serviceaccount app-a app-b vault --ignore-not-found=true
+        kubectl delete configmap vault-config --ignore-not-found=true
+        kubectl delete clusterrolebinding vault-tokenreview-binding --ignore-not-found=true
+        kubectl delete clusterrole vault-tokenreview --ignore-not-found=true

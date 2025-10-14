@@ -1,0 +1,108 @@
+name: Certificate Generation Test
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'k8s/scripts/generate-certs.sh'
+      - '.github/workflows/certificate-generation.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'k8s/scripts/generate-certs.sh'
+      - '.github/workflows/certificate-generation.yml'
+  workflow_dispatch:
+
+jobs:
+  test-certificate-generation:
+    name: Test Certificate Generation
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y openssl
+
+    - name: Verify OpenSSL installation
+      run: openssl version
+
+    - name: Verify Java keytool
+      run: keytool -help || true
+
+    - name: Make scripts executable
+      run: chmod +x k8s/scripts/*.sh
+
+    - name: Run certificate generation script
+      run: |
+        cd k8s/scripts
+        bash generate-certs.sh
+
+    - name: Verify CA certificate
+      run: |
+        if [ ! -f k8s/certs/ca-cert.pem ]; then
+          echo "CA certificate not found!"
+          exit 1
+        fi
+        openssl x509 -in k8s/certs/ca-cert.pem -noout -text
+
+    - name: Verify App A certificate
+      run: |
+        if [ ! -f k8s/certs/app-a-cert.pem ]; then
+          echo "App A certificate not found!"
+          exit 1
+        fi
+        openssl x509 -in k8s/certs/app-a-cert.pem -noout -text
+        echo "App A Subject Alternative Names:"
+        openssl x509 -in k8s/certs/app-a-cert.pem -noout -ext subjectAltName
+
+    - name: Verify App B certificate
+      run: |
+        if [ ! -f k8s/certs/app-b-cert.pem ]; then
+          echo "App B certificate not found!"
+          exit 1
+        fi
+        openssl x509 -in k8s/certs/app-b-cert.pem -noout -text
+        echo "App B Subject Alternative Names:"
+        openssl x509 -in k8s/certs/app-b-cert.pem -noout -ext subjectAltName
+
+    - name: Verify App A keystore
+      run: |
+        if [ ! -f k8s/certs/app-a-keystore.p12 ]; then
+          echo "App A keystore not found!"
+          exit 1
+        fi
+        keytool -list -v -keystore k8s/certs/app-a-keystore.p12 -storepass changeit
+
+    - name: Verify App B keystore
+      run: |
+        if [ ! -f k8s/certs/app-b-keystore.p12 ]; then
+          echo "App B keystore not found!"
+          exit 1
+        fi
+        keytool -list -v -keystore k8s/certs/app-b-keystore.p12 -storepass changeit
+
+    - name: Verify truststore
+      run: |
+        if [ ! -f k8s/certs/truststore.jks ]; then
+          echo "Truststore not found!"
+          exit 1
+        fi
+        keytool -list -v -keystore k8s/certs/truststore.jks -storepass changeit
+
+    - name: Verify certificate chain
+      run: |
+        echo "Verifying App A certificate chain..."
+        openssl verify -CAfile k8s/certs/ca-cert.pem k8s/certs/app-a-cert.pem
+        echo "Verifying App B certificate chain..."
+        openssl verify -CAfile k8s/certs/ca-cert.pem k8s/certs/app-b-cert.pem
+
+    - name: Upload certificates as artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: generated-certificates
+        path: k8s/certs/
+        retention-days: 1

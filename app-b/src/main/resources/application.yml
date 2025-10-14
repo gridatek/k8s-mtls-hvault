@@ -1,0 +1,42 @@
+server:
+  port: 8443
+  ssl:
+    enabled: true
+    key-store: file:/etc/security/ssl/app-b-keystore.p12
+    key-store-password: ${ssl.keystore-password}
+    key-store-type: ${ssl.keystore-type}
+    key-alias: ${ssl.key-alias}
+    trust-store: file:/etc/security/ssl/truststore.jks
+    trust-store-password: ${ssl.truststore-password}
+    trust-store-type: ${ssl.truststore-type}
+    client-auth: need
+
+spring:
+  application:
+    name: app-b
+  cloud:
+    vault:
+      enabled: true
+      uri: http://vault.default.svc.cluster.local:8200
+      authentication: KUBERNETES
+      kubernetes:
+        role: app-b
+        kubernetes-path: kubernetes
+        service-account-token-file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      kv:
+        enabled: true
+        backend: secret
+        application-name: app-b
+  config:
+    import: vault://
+
+app:
+  a:
+    url: https://app-a.default.svc.cluster.local:8443
+
+logging:
+  level:
+    com.k8s.appb: DEBUG
+    org.springframework.web: INFO
+    org.apache.http: DEBUG
+    org.springframework.cloud.vault: DEBUG

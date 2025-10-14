@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-b
+  namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-b
+  namespace: default
+  labels:
+    app: app-b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app-b
+  template:
+    metadata:
+      labels:
+        app: app-b
+    spec:
+      serviceAccountName: app-b
+      initContainers:
+      - name: vault-init
+        image: hashicorp/vault:1.15.4
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Authenticating with Vault..."
+          export VAULT_ADDR=http://vault.default.svc.cluster.local:8200
+          SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+
+          VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login role=app-b jwt=$SA_TOKEN)
+          export VAULT_TOKEN
+
+          echo "Retrieving and decoding certificates from Vault..."
+          vault kv get -field=ssl.keystore secret/app-b | base64 -d > /etc/security/ssl/app-b-keystore.p12
+          vault kv get -field=ssl.truststore secret/app-b | base64 -d > /etc/security/ssl/truststore.jks
+
+          echo "Certificates ready:"
+          ls -lh /etc/security/ssl/
+          echo "Certificate sizes:"
+          wc -c /etc/security/ssl/app-b-keystore.p12
+          wc -c /etc/security/ssl/truststore.jks
+        volumeMounts:
+        - name: ssl-certs
+          mountPath: /etc/security/ssl
+      containers:
+      - name: app-b
+        image: app-b:1.0.0-SNAPSHOT
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8443
+          name: https
+          protocol: TCP
+        env:
+        - name: JAVA_OPTS
+          value: "-Xmx512m -Xms256m"
+        volumeMounts:
+        - name: ssl-certs
+          mountPath: /etc/security/ssl
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - |
+              curl -k --cert /etc/security/ssl/app-b-keystore.p12:changeit \
+                --cert-type P12 \
+                https://localhost:8443/health
+          initialDelaySeconds: 90
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - |
+              curl -k --cert /etc/security/ssl/app-b-keystore.p12:changeit \
+                --cert-type P12 \
+                https://localhost:8443/health
+          initialDelaySeconds: 60
+          periodSeconds: 5
+      volumes:
+      - name: ssl-certs
+        emptyDir: {}

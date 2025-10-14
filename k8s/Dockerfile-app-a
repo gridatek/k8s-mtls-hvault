@@ -1,0 +1,15 @@
+FROM eclipse-temurin:17-jre-alpine
+
+# Install curl for health check probes
+RUN apk add --no-cache curl
+
+WORKDIR /app
+
+# Copy the built JAR file
+COPY app-a/target/app-a-1.0.0-SNAPSHOT.jar /app/app-a.jar
+
+# Expose HTTPS port
+EXPOSE 8443
+
+# Run the application
+ENTRYPOINT ["java", "-jar", "/app/app-a.jar"]
