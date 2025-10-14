@@ -222,9 +222,11 @@ Both applications use the same SSL configuration pattern in `application.yml`:
 - **Vault Integration:** Spring Cloud Vault with Kubernetes authentication
 
 **Certificate Retrieval:**
-- `VaultSslConfig` class retrieves certificates from Vault at application startup
-- Certificates are stored base64-encoded in Vault and decoded at runtime
-- Written to `/etc/security/ssl/` before Spring Boot SSL initialization
+- An init container (`vault-init`) retrieves certificates from Vault before the application starts
+- Init container authenticates using the pod's Kubernetes service account token
+- Certificates are stored base64-encoded in Vault and decoded by the init container
+- Written to `/etc/security/ssl/` shared volume before application container starts
+- Spring Cloud Vault retrieves only SSL passwords and configuration properties (not the binary certificate files)
 
 **RestTemplate SSL Configuration:**
 - mTLS client configuration is in the main application class (`AppAApplication.java`, `AppBApplication.java`)
@@ -396,6 +398,19 @@ The project now supports **HashiCorp Vault** for centralized secret management. 
 - **Roles**: `app-a` and `app-b` bound to respective service accounts
 - **RBAC**: Vault service account has ClusterRole with `tokenreviews` and `subjectaccessreviews` permissions to validate service account tokens
 
+**Init Container Architecture:**
+The deployment uses a two-container approach:
+1. **Init Container** (`vault-init` using `hashicorp/vault:1.15.4` image):
+   - Runs before the application container starts
+   - Authenticates with Vault using the pod's service account token
+   - Retrieves base64-encoded certificates from Vault
+   - Decodes and writes certificates to `/etc/security/ssl/` on a shared `emptyDir` volume
+   - Must complete successfully before the application container starts
+2. **Application Container** (Spring Boot):
+   - Reads certificates from the shared `/etc/security/ssl/` volume
+   - Uses Spring Cloud Vault only for password/property injection
+   - No direct Vault communication needed for certificate files
+
 ### Deployment with Vault
 
 **Complete Vault-based Deployment:**
@@ -489,10 +504,15 @@ spring:
 ```
 
 **Certificate Handling:**
-- Certificates are stored in Vault as base64-encoded strings
-- `VaultSslConfig` class retrieves secrets at startup via `@Value` injection
-- Certificates are decoded and written to `/etc/security/ssl/` directory
-- Spring Boot SSL configuration references the `/etc/security/ssl/` certificate files
+- Certificates are stored in Vault as base64-encoded strings in paths `secret/app-a` and `secret/app-b`
+- Init container retrieves and decodes certificates before the application starts:
+  ```bash
+  vault kv get -field=ssl.keystore secret/app-a | base64 -d > /etc/security/ssl/app-a-keystore.p12
+  vault kv get -field=ssl.truststore secret/app-a | base64 -d > /etc/security/ssl/truststore.jks
+  ```
+- Certificates are written to an `emptyDir` volume shared between init container and application container
+- Spring Boot SSL configuration references the decoded certificate files at `/etc/security/ssl/`
+- Spring Cloud Vault provides SSL passwords via property injection (e.g., `${ssl.keystore-password}`)
 
 ### Why Vault for Secret Management?
 
@@ -569,9 +589,10 @@ bash upload-certs-to-vault.sh
 ```
 
 **Certificate Decoding Issues:**
-- Check application startup logs for `VaultSslConfig` messages
-- Ensure base64 encoding is correct (no line wrapping with `-w 0` flag)
-- Verify `/etc/security/ssl` directory is writable in the container
+- Check init container logs: `kubectl logs <pod-name> -c vault-init`
+- Ensure base64 encoding is correct when uploading to Vault (use `-w 0` flag to prevent line wrapping)
+- Verify the init container successfully wrote certificates before application startup
+- Check that the `emptyDir` volume is properly mounted and shared between containers
 
 
 ## Project Purpose
