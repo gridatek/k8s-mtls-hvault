@@ -73,6 +73,7 @@ k8s-parent/
     │   ├── init-vault.sh                # Initialize Vault configuration
     │   ├── upload-certs-to-vault.sh     # Upload certificates to Vault
     │   ├── diagnose-vault-certs.sh      # Diagnose certificate integrity
+    │   ├── access-ui.sh                 # Interactive UI access helper
     │   ├── generate-certs.sh            # Certificate generation
     │   ├── build-images.sh              # Docker image build
     │   └── cleanup.sh                   # Resource cleanup
@@ -360,6 +361,146 @@ For more detailed information, refer to these documents:
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and debugging steps
 - **[docs/SECURITY.md](docs/SECURITY.md)** - Security best practices and considerations
 - **[.github/workflows/README.md](.github/workflows/README.md)** - CI/CD workflow details and troubleshooting
+
+## Monitoring and Visualization
+
+### Quick Access - UI Helper Script
+
+Use the interactive helper script for easy UI access:
+
+```bash
+cd k8s/scripts
+bash access-ui.sh
+```
+
+This script provides:
+- One-click access to Vault UI
+- Kubernetes Dashboard deployment and access
+- Token generation for dashboard login
+- All UI access information in one place
+
+### Kubernetes Dashboard
+
+To visualize your Kubernetes cluster state, deploy the Kubernetes Dashboard:
+
+```bash
+# Deploy Kubernetes Dashboard
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
+
+# Create admin user
+kubectl create serviceaccount dashboard-admin -n kubernetes-dashboard
+kubectl create clusterrolebinding dashboard-admin --clusterrole=cluster-admin --serviceaccount=kubernetes-dashboard:dashboard-admin
+
+# Get access token
+kubectl -n kubernetes-dashboard create token dashboard-admin
+
+# Start proxy
+kubectl proxy
+
+# Access dashboard at:
+# http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
+```
+
+**What you can see:**
+- Pod status and logs in real-time
+- Deployment rollout status
+- Resource usage (CPU/Memory)
+- Events and errors
+- Service endpoints and network configuration
+
+### Vault UI
+
+Access the Vault web interface to manage secrets:
+
+```bash
+# Port-forward to Vault service
+kubectl port-forward svc/vault 8200:8200
+
+# Open browser: http://localhost:8200
+# Token: root (development only)
+```
+
+**What you can see:**
+- All secrets stored in Vault (certificates, passwords)
+- Authentication methods and policies
+- Access logs and audit trail
+- Secret version history
+- Kubernetes auth role configuration
+
+### k9s - Terminal UI for Kubernetes
+
+For a terminal-based UI, install k9s:
+
+```bash
+# Install k9s
+# macOS
+brew install k9s
+
+# Windows
+choco install k9s
+
+# Linux
+curl -sS https://webinstall.dev/k9s | bash
+
+# Run k9s
+k9s
+```
+
+**Features:**
+- Real-time cluster monitoring
+- Quick pod log viewing (press `l` on a pod)
+- Shell into pods (press `s`)
+- Delete/edit resources interactively
+- Filter and search across resources
+- Resource usage graphs
+
+**Useful k9s shortcuts:**
+- `:pods` - View all pods
+- `:deploy` - View deployments
+- `:svc` - View services
+- `:secrets` - View secrets
+- `l` - View logs for selected resource
+- `d` - Describe selected resource
+- `e` - Edit selected resource
+- `/` - Filter resources
+
+### Monitoring Deployments
+
+Watch deployment progress in real-time:
+
+```bash
+# Watch all pods
+kubectl get pods -w
+
+# Watch pods with labels
+kubectl get pods -l 'app in (app-a,app-b,vault)' -w
+
+# Watch deployment rollout
+kubectl rollout status deployment/app-a
+kubectl rollout status deployment/app-b
+
+# Watch events
+kubectl get events --watch --sort-by='.lastTimestamp'
+```
+
+### Log Aggregation
+
+View logs from all services:
+
+```bash
+# Tail logs from multiple pods
+kubectl logs -f deployment/app-a & kubectl logs -f deployment/app-b & kubectl logs -f deployment/vault
+
+# Or use stern (stream logs from multiple pods)
+# Install: brew install stern (macOS) or choco install stern (Windows)
+stern "app-|vault" --tail 10
+
+# Filter logs for mTLS handshakes
+kubectl logs deployment/app-a | grep -i "ssl\|tls\|handshake"
+
+# Check init container logs (certificate retrieval)
+kubectl logs <pod-name> -c vault-init
+```
 
 ## HashiCorp Vault Integration
 

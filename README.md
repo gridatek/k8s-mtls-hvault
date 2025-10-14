@@ -172,6 +172,35 @@ mvn clean package -pl app-a
 mvn test
 ```
 
+## Monitoring and Visualization
+
+### Access UIs
+
+Use the helper script for easy access to monitoring UIs:
+
+```bash
+cd k8s/scripts
+bash access-ui.sh
+```
+
+**Available UIs:**
+
+1. **Vault UI** - Manage secrets and certificates
+   - Access: `kubectl port-forward svc/vault 8200:8200`
+   - URL: http://localhost:8200
+   - Token: `root` (dev only)
+
+2. **Kubernetes Dashboard** - Visualize cluster state
+   - Deploy and access via the helper script
+   - View pod status, logs, resource usage in real-time
+
+3. **k9s** - Terminal-based Kubernetes UI
+   - Install: `brew install k9s` (macOS) or `choco install k9s` (Windows)
+   - Run: `k9s`
+   - Real-time monitoring with keyboard shortcuts
+
+For detailed monitoring instructions, see [CLAUDE.md](CLAUDE.md#monitoring-and-visualization).
+
 ## HashiCorp Vault Integration
 
 This project uses HashiCorp Vault for centralized secret management:
