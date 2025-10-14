@@ -34,7 +34,7 @@ This guide covers local development workflows, testing strategies, and debugging
 
 ```bash
 # Clone repository
-git clone https://github.com/kgridou/k8s-parent.git
+git clone https://github.com/gridatek/k8s-mtls-hvault.git
 cd k8s-parent
 
 # Build all modules

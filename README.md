@@ -1,8 +1,8 @@
 # Kubernetes mTLS Service-to-Service Communication Demo
 
-[![CI](https://github.com/kgridou/k8s-parent/actions/workflows/ci.yml/badge.svg)](https://github.com/kgridou/k8s-parent/actions/workflows/ci.yml)
-[![Certificate Generation](https://github.com/kgridou/k8s-parent/actions/workflows/certificate-generation.yml/badge.svg)](https://github.com/kgridou/k8s-parent/actions/workflows/certificate-generation.yml)
-[![K8s Integration](https://github.com/kgridou/k8s-parent/actions/workflows/k8s-integration-test.yml/badge.svg)](https://github.com/kgridou/k8s-parent/actions/workflows/k8s-integration-test.yml)
+[![CI](https://github.com/gridatek/k8s-mtls-hvault/actions/workflows/ci.yml/badge.svg)](https://github.com/gridatek/k8s-mtls-hvault/actions/workflows/ci.yml)
+[![Certificate Generation](https://github.com/gridatek/k8s-mtls-hvault/actions/workflows/certificate-generation.yml/badge.svg)](https://github.com/gridatek/k8s-mtls-hvault/actions/workflows/certificate-generation.yml)
+[![K8s Integration](https://github.com/gridatek/k8s-mtls-hvault/actions/workflows/k8s-integration-test.yml/badge.svg)](https://github.com/gridatek/k8s-mtls-hvault/actions/workflows/k8s-integration-test.yml)
 
 A demonstration project showcasing secure service-to-service communication using mutual TLS (mTLS) in Kubernetes with Minikube.
 

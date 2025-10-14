@@ -67,9 +67,9 @@ You can trigger workflows manually from the GitHub Actions tab:
 Add these badges to your README.md to show workflow status:
 
 ```markdown
-![CI](https://github.com/kgridou/k8s-parent/actions/workflows/ci.yml/badge.svg)
-![Certificate Generation](https://github.com/kgridou/k8s-parent/actions/workflows/certificate-generation.yml/badge.svg)
-![K8s Integration](https://github.com/kgridou/k8s-parent/actions/workflows/k8s-integration-test.yml/badge.svg)
+![CI](https://github.com/gridatek/k8s-mtls-hvault/actions/workflows/ci.yml/badge.svg)
+![Certificate Generation](https://github.com/gridatek/k8s-mtls-hvault/actions/workflows/certificate-generation.yml/badge.svg)
+![K8s Integration](https://github.com/gridatek/k8s-mtls-hvault/actions/workflows/k8s-integration-test.yml/badge.svg)
 ```
 
 ## Local Testing

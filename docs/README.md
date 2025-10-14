@@ -238,8 +238,8 @@ We welcome contributions! Here's how to get started:
 
 ## Support
 
-- **Issues**: Report bugs or request features on [GitHub Issues](https://github.com/kgridou/k8s-parent/issues)
-- **Discussions**: Ask questions in [GitHub Discussions](https://github.com/kgridou/k8s-parent/discussions)
+- **Issues**: Report bugs or request features on [GitHub Issues](https://github.com/gridatek/k8s-mtls-hvault/issues)
+- **Discussions**: Ask questions in [GitHub Discussions](https://github.com/gridatek/k8s-mtls-hvault/discussions)
 - **Documentation**: Check this documentation first
 
 ## Additional Resources
