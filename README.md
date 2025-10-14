@@ -13,6 +13,7 @@ This project implements two Spring Boot microservices (App A and App B) that com
 ## Features
 
 - **Mutual TLS Authentication**: Both services verify each other's identity using X.509 certificates
+- **HashiCorp Vault Integration**: Centralized secret management with Kubernetes authentication
 - **Spring Boot 3.2.0**: Modern Spring Boot applications with Java 17
 - **Maven Multi-Module**: Organized project structure with separate modules
 - **Kubernetes Ready**: Complete deployment manifests and scripts for Minikube
@@ -44,11 +45,12 @@ bash deploy.sh
 ```
 
 This single command will:
-1. Generate all required certificates
-2. Build Maven artifacts
-3. Create Docker images
-4. Create Kubernetes secrets
-5. Deploy both applications
+1. Deploy and configure HashiCorp Vault
+2. Generate all required certificates
+3. Upload certificates to Vault
+4. Build Maven artifacts
+5. Create Docker images
+6. Deploy both applications with Vault integration
 
 ### Verify Deployment
 
@@ -83,7 +85,9 @@ k8s-parent/
 Both applications expose HTTPS endpoints on port 8443 and communicate using:
 - **PKCS#12 Keystores** (.p12): Contains each app's private key and certificate
 - **Java Truststore** (.jks): Contains CA certificate for peer verification
-- **Kubernetes Secrets**: Securely mounts certificates into pods at `/etc/security/ssl/`
+- **HashiCorp Vault**: Stores certificates securely with Kubernetes authentication
+- **Init Containers**: Retrieve and decode certificates from Vault at pod startup
+- **Spring Cloud Vault**: Injects SSL passwords and configuration properties
 
 Service communication flow:
 ```
@@ -106,22 +110,25 @@ App B (app-b.default.svc.cluster.local:8443)
 
 ## Manual Deployment Steps
 
-If you prefer step-by-step deployment:
+If you prefer step-by-step deployment with Vault:
 
 ```bash
-# 1. Generate certificates
+# 1. Deploy and configure Vault
 cd k8s/scripts
-bash generate-certs.sh
+bash vault-deploy.sh
 
 # 2. Build Docker images
 bash build-images.sh
 
-# 3. Create Kubernetes secrets
-bash create-k8s-secrets.sh
-
-# 4. Deploy applications
-kubectl apply -f ../manifests/
+# 3. Deploy applications
+cd ../manifests
+kubectl apply -f app-a-service.yaml
+kubectl apply -f app-a-deployment.yaml
+kubectl apply -f app-b-service.yaml
+kubectl apply -f app-b-deployment.yaml
 ```
+
+The `vault-deploy.sh` script handles certificate generation and upload to Vault automatically.
 
 ## Testing
 
@@ -165,6 +172,40 @@ mvn clean package -pl app-a
 mvn test
 ```
 
+## HashiCorp Vault Integration
+
+This project uses HashiCorp Vault for centralized secret management:
+
+### Key Features
+- **Kubernetes Authentication**: Applications authenticate using service account tokens
+- **Secure Storage**: Certificates stored base64-encoded in Vault's KV v2 secrets engine
+- **Init Container Pattern**: Certificates retrieved before application starts
+- **Least-Privilege Access**: Separate Vault policies for each application
+
+### Vault Scripts
+Located in `k8s/scripts/`:
+- `vault-deploy.sh` - Complete Vault setup with certificates
+- `init-vault.sh` - Initialize Vault configuration
+- `upload-certs-to-vault.sh` - Upload certificates to Vault
+- `diagnose-vault-certs.sh` - Verify certificate integrity
+
+### Quick Commands
+
+```bash
+# Access Vault UI (development only)
+kubectl port-forward svc/vault 8200:8200
+# Open http://localhost:8200 (Token: root)
+
+# View certificates in Vault
+VAULT_POD=$(kubectl get pod -l app=vault -o jsonpath="{.items[0].metadata.name}")
+kubectl exec -it $VAULT_POD -- vault kv get secret/app-a/ssl
+
+# Diagnose certificate issues
+cd k8s/scripts && bash diagnose-vault-certs.sh
+```
+
+For detailed Vault documentation, see [CLAUDE.md](CLAUDE.md#hashicorp-vault-integration).
+
 ## CI/CD
 
 This project includes comprehensive GitHub Actions workflows:
@@ -194,7 +235,6 @@ cd k8s/scripts && bash generate-certs.sh
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Detailed architecture and mTLS flow
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and solutions
 - **[docs/SECURITY.md](docs/SECURITY.md)** - Security best practices
-- **[docs/LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md)** - Local development guide
 - **[.github/workflows/README.md](.github/workflows/README.md)** - CI/CD workflow documentation
 
 ## Security Notes
@@ -207,9 +247,9 @@ cd k8s/scripts && bash generate-certs.sh
 ## Future Enhancements
 
 - Integration with cert-manager for automated certificate rotation
-- HashiCorp Vault for secrets management
 - Prometheus metrics and monitoring
 - Distributed tracing with Jaeger/Zipkin
+- HashiCorp Vault Agent for dynamic secret rotation
 
 ## License
 

@@ -68,11 +68,14 @@ k8s-parent/
 └── k8s/                # Kubernetes resources
     ├── manifests/      # K8s deployment & service YAML files
     ├── scripts/        # Certificate generation and deployment scripts
-    │   ├── deploy.sh                # Full deployment automation
-    │   ├── generate-certs.sh        # Certificate generation
-    │   ├── build-images.sh          # Docker image build
-    │   ├── create-k8s-secrets.sh    # K8s secret creation
-    │   └── cleanup.sh               # Resource cleanup
+    │   ├── deploy.sh                    # Full deployment automation
+    │   ├── vault-deploy.sh              # Deploy and configure Vault
+    │   ├── init-vault.sh                # Initialize Vault configuration
+    │   ├── upload-certs-to-vault.sh     # Upload certificates to Vault
+    │   ├── diagnose-vault-certs.sh      # Diagnose certificate integrity
+    │   ├── generate-certs.sh            # Certificate generation
+    │   ├── build-images.sh              # Docker image build
+    │   └── cleanup.sh                   # Resource cleanup
     └── certs/          # Generated certificates (git-ignored)
 ```
 
@@ -99,12 +102,6 @@ docker build -t app-b:1.0.0-SNAPSHOT -f k8s/Dockerfile-app-b .
 cd k8s/scripts && bash build-images.sh
 ```
 
-### Run locally (without TLS, for development)
-```bash
-cd app-a && mvn spring-boot:run
-cd app-b && mvn spring-boot:run
-```
-
 ### Run tests
 ```bash
 # Run all tests
@@ -124,6 +121,7 @@ mvn test -pl app-a -Dtest=HealthControllerTest
 - Minikube installed and running: `minikube start`
 - kubectl configured to use minikube context
 - OpenSSL and Java keytool installed
+- **Windows Users**: Git Bash, WSL, or similar Unix shell required for all bash scripts (PowerShell NOT supported)
 
 ### Complete Deployment (All Steps)
 ```bash
@@ -361,14 +359,15 @@ For more detailed information, refer to these documents:
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Detailed architecture and mTLS communication flow
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and debugging steps
 - **[docs/SECURITY.md](docs/SECURITY.md)** - Security best practices and considerations
-- **[docs/LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md)** - Local development without Kubernetes
 - **[.github/workflows/README.md](.github/workflows/README.md)** - CI/CD workflow details and troubleshooting
 
 ## HashiCorp Vault Integration
 
 ### Overview
 
-The project now supports **HashiCorp Vault** for centralized secret management. This is the recommended approach for production-like deployments.
+This project uses **HashiCorp Vault** as the primary secret management solution for storing and distributing SSL certificates and passwords. Vault integration is **fully implemented and production-ready**.
+
+**Note**: The README.md may list Vault as a "future enhancement" - this is outdated. Vault is the current and recommended deployment method.
 
 **Benefits of Vault Integration:**
 - **Centralized Secret Management**: All SSL certificates and passwords stored securely in Vault
@@ -399,17 +398,24 @@ The project now supports **HashiCorp Vault** for centralized secret management. 
 - **RBAC**: Vault service account has ClusterRole with `tokenreviews` and `subjectaccessreviews` permissions to validate service account tokens
 
 **Init Container Architecture:**
-The deployment uses a two-container approach:
+The deployment uses a two-container approach for security and separation of concerns:
+
 1. **Init Container** (`vault-init` using `hashicorp/vault:1.15.4` image):
-   - Runs before the application container starts
-   - Authenticates with Vault using the pod's service account token
-   - Retrieves base64-encoded certificates from Vault
-   - Decodes and writes certificates to `/etc/security/ssl/` on a shared `emptyDir` volume
+   - Runs **before** the application container starts
+   - Authenticates with Vault using the pod's Kubernetes service account token
+   - Retrieves base64-encoded certificates from Vault paths:
+     - `secret/app-a/ssl.keystore` → `/etc/security/ssl/app-a-keystore.p12`
+     - `secret/app-a/ssl.truststore` → `/etc/security/ssl/truststore.jks`
+   - Decodes certificates and writes to shared `emptyDir` volume
    - Must complete successfully before the application container starts
+   - If init container fails, the pod will remain in `Init:Error` or `Init:CrashLoopBackOff` state
+
 2. **Application Container** (Spring Boot):
-   - Reads certificates from the shared `/etc/security/ssl/` volume
-   - Uses Spring Cloud Vault only for password/property injection
-   - No direct Vault communication needed for certificate files
+   - Starts only after init container succeeds
+   - Reads certificate files from the shared `/etc/security/ssl/` volume
+   - Uses Spring Cloud Vault **only** for password/property injection (e.g., `ssl.keystore-password`)
+   - Does NOT retrieve binary certificate files via Spring Cloud Vault
+   - This approach keeps the application code simple and Vault-agnostic
 
 ### Deployment with Vault
 
@@ -451,6 +457,13 @@ kubectl apply -f app-b-deployment.yaml
 
 ### Vault Management
 
+**Quick Reference - Vault Scripts:**
+All scripts located in `k8s/scripts/`:
+- `vault-deploy.sh` - Deploy Vault, initialize, generate certs, and upload to Vault (all-in-one)
+- `init-vault.sh` - Initialize Vault with KV v2, Kubernetes auth, policies, and roles
+- `upload-certs-to-vault.sh` - Upload certificates to Vault (base64-encoded)
+- `diagnose-vault-certs.sh` - Diagnostic tool to verify certificate integrity in Vault
+
 **Access Vault UI (Development Only):**
 ```bash
 kubectl port-forward svc/vault 8200:8200
@@ -476,6 +489,18 @@ bash upload-certs-to-vault.sh
 cd k8s/scripts
 bash init-vault.sh
 ```
+
+**Diagnose Certificate Integrity in Vault:**
+```bash
+cd k8s/scripts
+bash diagnose-vault-certs.sh
+```
+This diagnostic script verifies:
+- Original certificate file size matches what's stored in Vault
+- Base64 encoding/decoding integrity
+- PKCS12 keystore validity after retrieval from Vault
+- Byte-level comparison of original vs decoded certificates
+- Useful for troubleshooting certificate corruption or encoding issues
 
 ### Spring Cloud Vault Configuration
 
@@ -593,6 +618,20 @@ bash upload-certs-to-vault.sh
 - Ensure base64 encoding is correct when uploading to Vault (use `-w 0` flag to prevent line wrapping)
 - Verify the init container successfully wrote certificates before application startup
 - Check that the `emptyDir` volume is properly mounted and shared between containers
+- Run diagnostic script to verify certificate integrity: `bash k8s/scripts/diagnose-vault-certs.sh`
+- Common cause: newlines in base64 encoding - always use `base64 -w 0` (Linux) or `base64` without flags (macOS)
+
+**Vault Connection Timeout:**
+- Verify Vault pod is running: `kubectl get pods -l app=vault`
+- Check Vault service endpoint: `kubectl get svc vault`
+- Test connectivity from application pod: `kubectl exec -it deployment/app-a -- curl -v http://vault.default.svc.cluster.local:8200/v1/sys/health`
+- Ensure DNS resolution works: `kubectl exec -it deployment/app-a -- nslookup vault.default.svc.cluster.local`
+
+**Init Container Failures:**
+- Check init container logs: `kubectl logs <pod-name> -c vault-init`
+- Verify service account has correct permissions: `kubectl get sa app-a app-b`
+- Ensure Vault roles are configured: `kubectl exec $VAULT_POD -- vault read auth/kubernetes/role/app-a`
+- Check if certificates exist in Vault: `kubectl exec $VAULT_POD -- vault kv list secret/`
 
 
 ## Project Purpose

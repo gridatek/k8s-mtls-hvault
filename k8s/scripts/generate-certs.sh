@@ -134,6 +134,8 @@ ls -lh *.p12 *.jks 2>/dev/null || true
 
 echo ""
 echo "Next steps:"
-echo "1. Create Kubernetes secrets using create-k8s-secrets.sh"
-echo "2. Build Docker images for app-a and app-b"
-echo "3. Deploy to Kubernetes using manifests in k8s/manifests/"
+echo "1. Upload certificates to Vault: ./upload-certs-to-vault.sh"
+echo "2. Build Docker images: ./build-images.sh"
+echo "3. Deploy applications: kubectl apply -f ../manifests/"
+echo ""
+echo "Or use the complete deployment script: ./deploy.sh"
