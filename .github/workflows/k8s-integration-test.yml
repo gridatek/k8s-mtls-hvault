@@ -305,6 +305,10 @@ jobs:
         # Wait for app-a
         if kubectl wait --for=condition=available --timeout=300s deployment/app-a; then
           echo "✓ App A is ready"
+          echo ""
+          echo "=== App A Startup Logs (Last 50 lines) ==="
+          POD_A=$(kubectl get pod -l app=app-a -o jsonpath='{.items[0].metadata.name}')
+          kubectl logs $POD_A --tail=50 || echo "No logs available"
         else
           echo "✗ App A deployment timeout - investigating..."
 
@@ -318,18 +322,30 @@ jobs:
             kubectl describe pod $POD_A
 
             echo ""
-            echo "=== App A Container Logs ==="
-            kubectl logs $POD_A --tail=100 || echo "No logs available"
+            echo "=== App A Init Container Logs ==="
+            kubectl logs $POD_A -c vault-init || echo "No init logs available"
+
+            echo ""
+            echo "=== App A Container Logs (Full) ==="
+            kubectl logs $POD_A --tail=200 || echo "No logs available"
           fi
 
           echo ""
           echo "=== App A Deployment ==="
           kubectl describe deployment app-a
+          exit 1
         fi
+
+        echo ""
+        echo ""
 
         # Wait for app-b
         if kubectl wait --for=condition=available --timeout=300s deployment/app-b; then
           echo "✓ App B is ready"
+          echo ""
+          echo "=== App B Startup Logs (Last 50 lines) ==="
+          POD_B=$(kubectl get pod -l app=app-b -o jsonpath='{.items[0].metadata.name}')
+          kubectl logs $POD_B --tail=50 || echo "No logs available"
         else
           echo "✗ App B deployment timeout - investigating..."
 
@@ -343,13 +359,18 @@ jobs:
             kubectl describe pod $POD_B
 
             echo ""
-            echo "=== App B Container Logs ==="
-            kubectl logs $POD_B --tail=100 || echo "No logs available"
+            echo "=== App B Init Container Logs ==="
+            kubectl logs $POD_B -c vault-init || echo "No init logs available"
+
+            echo ""
+            echo "=== App B Container Logs (Full) ==="
+            kubectl logs $POD_B --tail=200 || echo "No logs available"
           fi
 
           echo ""
           echo "=== App B Deployment ==="
           kubectl describe deployment app-b
+          exit 1
         fi
 
     - name: Debug - Check images in Minikube
@@ -380,17 +401,17 @@ jobs:
         echo "=== Vault Logs ==="
         kubectl logs -l app=vault --tail=100 || echo "No logs available"
 
-    - name: Show App A logs
+    - name: Show App A logs (Full)
       if: always()
       run: |
-        echo "=== App A Logs ==="
-        kubectl logs -l app=app-a --tail=100 || echo "No logs available"
+        echo "=== App A Full Logs ==="
+        kubectl logs -l app=app-a --tail=200 || echo "No logs available"
 
-    - name: Show App B logs
+    - name: Show App B logs (Full)
       if: always()
       run: |
-        echo "=== App B Logs ==="
-        kubectl logs -l app=app-b --tail=100 || echo "No logs available"
+        echo "=== App B Full Logs ==="
+        kubectl logs -l app=app-b --tail=200 || echo "No logs available"
 
     - name: Describe App A pod
       if: always()
@@ -406,6 +427,35 @@ jobs:
         POD_B=$(kubectl get pod -l app=app-b -o jsonpath='{.items[0].metadata.name}')
         if [ ! -z "$POD_B" ]; then
           kubectl describe pod $POD_B
+        fi
+
+    - name: Verify Certificate Information Logging
+      if: always()
+      run: |
+        echo "=================================================="
+        echo "CERTIFICATE INFORMATION FROM APPLICATION LOGS"
+        echo "=================================================="
+        echo ""
+
+        POD_A=$(kubectl get pod -l app=app-a -o jsonpath='{.items[0].metadata.name}')
+        POD_B=$(kubectl get pod -l app=app-b -o jsonpath='{.items[0].metadata.name}')
+
+        if [ ! -z "$POD_A" ]; then
+          echo "=== APP A CERTIFICATE INFORMATION ==="
+          echo ""
+          kubectl logs $POD_A | grep -A 150 "CERTIFICATE INFORMATION" || echo "Certificate information not found in App A logs"
+          echo ""
+          echo "=================================================="
+          echo ""
+        fi
+
+        if [ ! -z "$POD_B" ]; then
+          echo "=== APP B CERTIFICATE INFORMATION ==="
+          echo ""
+          kubectl logs $POD_B | grep -A 150 "CERTIFICATE INFORMATION" || echo "Certificate information not found in App B logs"
+          echo ""
+          echo "=================================================="
+          echo ""
         fi
 
     - name: Test App A health endpoint
