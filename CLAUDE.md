@@ -251,6 +251,97 @@ Both applications use the same SSL configuration pattern in `application.yml`:
 - `GET /api/greet` - Returns greeting message
 - `GET /api/call-app-a` - Calls App A and returns response
 
+### Certificate Information Logging
+
+Both applications automatically log detailed certificate information when they start up by executing `keytool` commands directly against the certificate files on disk. This allows you to verify what certificates Tomcat is actually using for mTLS connections, independent of Spring's configuration.
+
+The `CertificateInfoService` listens for the `ApplicationReadyEvent` and executes `keytool -list -v` commands against both the keystore and truststore **after** the application is fully initialized and Tomcat is ready.
+
+**Why use keytool commands?**
+- Reads certificates directly from the filesystem, not through Spring properties
+- Provides absolute certainty about what's on disk
+- Same tool that Tomcat uses internally to load certificates
+- Shows all certificate details including extensions and fingerprints
+
+**Commands executed:**
+```bash
+# For PKCS12 keystore
+keytool -list -v -keystore /etc/security/ssl/app-a-keystore.p12 -storepass changeit -storetype PKCS12
+
+# For JKS truststore
+keytool -list -v -keystore /etc/security/ssl/truststore.jks -storepass changeit -storetype JKS
+```
+
+**View certificate logs:**
+```bash
+# View App A certificate information
+kubectl logs deployment/app-a | grep -A 100 "CERTIFICATE INFORMATION"
+
+# View App B certificate information
+kubectl logs deployment/app-b | grep -A 100 "CERTIFICATE INFORMATION"
+
+# Follow logs to see certificate info on startup
+kubectl logs -f deployment/app-a
+
+# View only keystore info
+kubectl logs deployment/app-a | grep -A 50 "KEYSTORE INFORMATION"
+
+# View only truststore info
+kubectl logs deployment/app-a | grep -A 50 "TRUSTSTORE INFORMATION"
+```
+
+**Example log output:**
+```
+================================================================================
+CERTIFICATE INFORMATION (Using keytool commands)
+================================================================================
+Keystore Path: /etc/security/ssl/app-a-keystore.p12
+Truststore Path: /etc/security/ssl/truststore.jks
+--------------------------------------------------------------------------------
+KEYSTORE INFORMATION (PKCS12):
+
+>>> Executing: keytool -list -keystore /etc/security/ssl/app-a-keystore.p12 -storepass [REDACTED] -storetype PKCS12
+  Keystore type: PKCS12
+  Keystore provider: SUN
+
+  Your keystore contains 1 entry
+
+  app-a, Jan 21, 2025, PrivateKeyEntry,
+  Certificate fingerprint (SHA-256): 12:34:56:78:90:AB:CD:EF...
+
+>>> Detailed certificate information:
+>>> Executing: keytool -list -v -keystore /etc/security/ssl/app-a-keystore.p12 -storepass [REDACTED] -storetype PKCS12
+  Alias name: app-a
+  Creation date: Jan 21, 2025
+  Entry type: PrivateKeyEntry
+  Certificate chain length: 1
+  Certificate[1]:
+  Owner: CN=app-a, O=K8s Demo, L=City, ST=State, C=US
+  Issuer: CN=K8s CA, O=K8s Demo, L=City, ST=State, C=US
+  Serial number: 1234567890abcdef
+  Valid from: Mon Jan 21 00:00:00 UTC 2025 until: Tue Jan 21 00:00:00 UTC 2026
+  Certificate fingerprints:
+           SHA1: 12:34:56:78:90:AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78
+           SHA256: 12:34:56:78:90:AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78
+  Signature algorithm name: SHA256withRSA
+  Subject Public Key Algorithm: 2048-bit RSA key
+  Version: 3
+
+  Extensions:
+
+  #1: ObjectId: 2.5.29.17 Criticality=false
+  SubjectAlternativeName [
+    DNSName: app-a.default.svc.cluster.local
+    DNSName: localhost
+  ]
+  ...
+
+--------------------------------------------------------------------------------
+TRUSTSTORE INFORMATION (JKS):
+  [Similar output for truststore...]
+================================================================================
+```
+
 ## Troubleshooting
 
 **Certificates:**
