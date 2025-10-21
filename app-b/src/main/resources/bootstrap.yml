@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: app-b
+  cloud:
+    vault:
+      enabled: true
+      uri: http://vault.default.svc.cluster.local:8200
+      authentication: KUBERNETES
+      kubernetes:
+        role: app-b
+        kubernetes-path: kubernetes
+        service-account-token-file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      kv:
+        enabled: true
+        backend: secret
+        application-name: app-b
