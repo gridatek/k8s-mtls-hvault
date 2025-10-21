@@ -40,3 +40,9 @@ logging:
     org.springframework.web: INFO
     org.apache.http: DEBUG
     org.springframework.cloud.vault: DEBUG
+    org.springframework.boot.autoconfigure.ssl: DEBUG
+    org.springframework.boot.web.embedded.tomcat: DEBUG
+    org.springframework.context: DEBUG
+    org.springframework.core.env: TRACE
+    org.springframework.boot.context.config: DEBUG
+    org.springframework.vault: DEBUG
