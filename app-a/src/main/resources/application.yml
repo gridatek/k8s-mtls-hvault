@@ -3,12 +3,12 @@ server:
   ssl:
     enabled: true
     key-store: file:/etc/security/ssl/app-a-keystore.p12
-    key-store-password: ${ssl.keystore-password}
-    key-store-type: ${ssl.keystore-type}
-    key-alias: ${ssl.key-alias}
+    key-store-password: changeit
+    key-store-type: PKCS12
+    key-alias: app-a
     trust-store: file:/etc/security/ssl/truststore.jks
-    trust-store-password: ${ssl.truststore-password}
-    trust-store-type: ${ssl.truststore-type}
+    trust-store-password: changeit
+    trust-store-type: JKS
     client-auth: need
 
 spring:
