@@ -14,3 +14,9 @@ spring:
         enabled: true
         backend: secret
         application-name: app-a
+      fail-fast: true
+
+logging:
+  level:
+    org.springframework.cloud.vault: DEBUG
+    org.springframework.vault: DEBUG
