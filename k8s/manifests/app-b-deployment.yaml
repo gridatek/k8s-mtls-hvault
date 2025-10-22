@@ -38,7 +38,6 @@ spec:
 
           echo "Retrieving and decoding certificates from Vault..."
           vault kv get -field=ssl.keystore secret/app-b | base64 -d > /etc/security/ssl/app-b-keystore.p12
-          # Using incomplete truststore for SSL error testing
           vault kv get -field=ssl.truststore secret/app-b | base64 -d > /etc/security/ssl/truststore.jks
           echo "WARNING: Using incomplete truststore - expect SSL errors"
 
