@@ -21,21 +21,29 @@ echo "Output directory: ${CERTS_DIR}"
 echo "Cleaning up old certificates..."
 rm -f *.pem *.crt *.key *.csr *.p12 *.jks
 
-# 1. Generate CA (Certificate Authority)
+# 1. Generate CA certificates (real CA for truststore, fake CA for signing app certs)
 echo ""
-echo "Step 1: Generating CA certificate..."
+echo "Step 1: Generating CA certificates..."
+
+# Real CA that will go in the truststore
 openssl genrsa -out ca-key.pem 4096
 openssl req -new -x509 -days ${VALIDITY_DAYS} -key ca-key.pem -out ca-cert.pem \
   -subj "/C=US/ST=State/L=City/O=K8S/OU=CA/CN=k8s-ca"
 
-echo "CA certificate generated: ca-cert.pem"
+# Fake CA that will sign the app certificates (different from truststore CA)
+openssl genrsa -out fake-ca-key.pem 4096
+openssl req -new -x509 -days ${VALIDITY_DAYS} -key fake-ca-key.pem -out fake-ca-cert.pem \
+  -subj "/C=US/ST=State/L=City/O=K8S/OU=FAKE_CA/CN=fake-k8s-ca"
+
+echo "Real CA certificate generated: ca-cert.pem (for truststore)"
+echo "Fake CA certificate generated: fake-ca-cert.pem (for signing app certs)"
 
 # 2. Generate App A certificate
 echo ""
 echo "Step 2: Generating App A certificate..."
 openssl genrsa -out app-a-key.pem 2048
 openssl req -new -key app-a-key.pem -out app-a.csr \
-  -subj "/C=US/ST=State/L=City/O=K8S/OU=AppA/CN=fake-app-a.wrong.domain"
+  -subj "/C=US/ST=State/L=City/O=K8S/OU=AppA/CN=app-a.default.svc.cluster.local"
 
 # Create SAN config for App A
 cat > app-a-san.cnf <<EOF
@@ -49,18 +57,19 @@ req_extensions = v3_req
 subjectAltName = @alt_names
 
 [alt_names]
-DNS.1 = fake-app-a
-DNS.2 = wrong.domain
-DNS.3 = invalid.service
-DNS.4 = fake-app-a.wrong.domain
+DNS.1 = app-a
+DNS.2 = app-a.default
+DNS.3 = app-a.default.svc
+DNS.4 = app-a.default.svc.cluster.local
 DNS.5 = localhost
 IP.1 = 127.0.0.1
 EOF
 
-openssl x509 -req -in app-a.csr -CA ca-cert.pem -CAkey ca-key.pem \
+openssl x509 -req -in app-a.csr -CA fake-ca-cert.pem -CAkey fake-ca-key.pem \
   -CAcreateserial -out app-a-cert.pem -days ${VALIDITY_DAYS} \
   -extensions v3_req -extfile app-a-san.cnf
 
+echo "WARNING: App A certificate signed by FAKE CA - will cause PKIX path building errors!"
 echo "App A certificate generated: app-a-cert.pem"
 
 # 3. Generate App B certificate
@@ -68,7 +77,7 @@ echo ""
 echo "Step 3: Generating App B certificate..."
 openssl genrsa -out app-b-key.pem 2048
 openssl req -new -key app-b-key.pem -out app-b.csr \
-  -subj "/C=US/ST=State/L=City/O=K8S/OU=AppB/CN=fake-app-b.wrong.domain"
+  -subj "/C=US/ST=State/L=City/O=K8S/OU=AppB/CN=app-b.default.svc.cluster.local"
 
 # Create SAN config for App B
 cat > app-b-san.cnf <<EOF
@@ -82,18 +91,19 @@ req_extensions = v3_req
 subjectAltName = @alt_names
 
 [alt_names]
-DNS.1 = fake-app-b
-DNS.2 = wrong.domain
-DNS.3 = invalid.service
-DNS.4 = fake-app-b.wrong.domain
+DNS.1 = app-b
+DNS.2 = app-b.default
+DNS.3 = app-b.default.svc
+DNS.4 = app-b.default.svc.cluster.local
 DNS.5 = localhost
 IP.1 = 127.0.0.1
 EOF
 
-openssl x509 -req -in app-b.csr -CA ca-cert.pem -CAkey ca-key.pem \
+openssl x509 -req -in app-b.csr -CA fake-ca-cert.pem -CAkey fake-ca-key.pem \
   -CAcreateserial -out app-b-cert.pem -days ${VALIDITY_DAYS} \
   -extensions v3_req -extfile app-b-san.cnf
 
+echo "WARNING: App B certificate signed by FAKE CA - will cause PKIX path building errors!"
 echo "App B certificate generated: app-b-cert.pem"
 
 # 4. Create PKCS12 keystores for each application
