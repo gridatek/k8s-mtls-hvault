@@ -10,7 +10,7 @@ import org.springframework.stereotype.Service;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 
-@Service
+//@Service
 public class CertificateInfoService {
 
     private static final Logger logger = LoggerFactory.getLogger(CertificateInfoService.class);

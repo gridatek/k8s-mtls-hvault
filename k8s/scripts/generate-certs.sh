@@ -21,14 +21,22 @@ echo "Output directory: ${CERTS_DIR}"
 echo "Cleaning up old certificates..."
 rm -f *.pem *.crt *.key *.csr *.p12 *.jks
 
-# 1. Generate CA (Certificate Authority)
+# 1. Generate CA certificates (real CA for truststore, fake CA for signing app certs)
 echo ""
-echo "Step 1: Generating CA certificate..."
+echo "Step 1: Generating CA certificates..."
+
+# Real CA that will go in the truststore
 openssl genrsa -out ca-key.pem 4096
 openssl req -new -x509 -days ${VALIDITY_DAYS} -key ca-key.pem -out ca-cert.pem \
   -subj "/C=US/ST=State/L=City/O=K8S/OU=CA/CN=k8s-ca"
 
-echo "CA certificate generated: ca-cert.pem"
+# Fake CA that will sign the app certificates (different from truststore CA)
+openssl genrsa -out fake-ca-key.pem 4096
+openssl req -new -x509 -days ${VALIDITY_DAYS} -key fake-ca-key.pem -out fake-ca-cert.pem \
+  -subj "/C=US/ST=State/L=City/O=K8S/OU=FAKE_CA/CN=fake-k8s-ca"
+
+echo "Real CA certificate generated: ca-cert.pem (for truststore)"
+echo "Fake CA certificate generated: fake-ca-cert.pem (for signing app certs)"
 
 # 2. Generate App A certificate
 echo ""
@@ -57,10 +65,11 @@ DNS.5 = localhost
 IP.1 = 127.0.0.1
 EOF
 
-openssl x509 -req -in app-a.csr -CA ca-cert.pem -CAkey ca-key.pem \
+openssl x509 -req -in app-a.csr -CA fake-ca-cert.pem -CAkey fake-ca-key.pem \
   -CAcreateserial -out app-a-cert.pem -days ${VALIDITY_DAYS} \
   -extensions v3_req -extfile app-a-san.cnf
 
+echo "WARNING: App A certificate signed by FAKE CA - will cause PKIX path building errors!"
 echo "App A certificate generated: app-a-cert.pem"
 
 # 3. Generate App B certificate
@@ -90,10 +99,11 @@ DNS.5 = localhost
 IP.1 = 127.0.0.1
 EOF
 
-openssl x509 -req -in app-b.csr -CA ca-cert.pem -CAkey ca-key.pem \
+openssl x509 -req -in app-b.csr -CA fake-ca-cert.pem -CAkey fake-ca-key.pem \
   -CAcreateserial -out app-b-cert.pem -days ${VALIDITY_DAYS} \
   -extensions v3_req -extfile app-b-san.cnf
 
+echo "WARNING: App B certificate signed by FAKE CA - will cause PKIX path building errors!"
 echo "App B certificate generated: app-b-cert.pem"
 
 # 4. Create PKCS12 keystores for each application
