@@ -41,7 +41,7 @@ fi
 # Step 4: Upload certificates to Vault
 echo ""
 echo "Step 4: Uploading certificates to Vault..."
-bash "${SCRIPT_DIR}/upload-incomplete-certs-to-vault.sh"
+bash "${SCRIPT_DIR}/upload-certs-to-vault.sh"
 
 echo ""
 echo "========================================="

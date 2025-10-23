@@ -35,7 +35,7 @@ echo ""
 echo "Step 2: Generating App A certificate..."
 openssl genrsa -out app-a-key.pem 2048
 openssl req -new -key app-a-key.pem -out app-a.csr \
-  -subj "/C=US/ST=State/L=City/O=K8S/OU=AppA/CN=app-a.default.svc.cluster.local"
+  -subj "/C=US/ST=State/L=City/O=K8S/OU=AppA/CN=fake-app-a.wrong.domain"
 
 # Create SAN config for App A
 cat > app-a-san.cnf <<EOF
@@ -49,10 +49,10 @@ req_extensions = v3_req
 subjectAltName = @alt_names
 
 [alt_names]
-DNS.1 = app-a
-DNS.2 = app-a.default
-DNS.3 = app-a.default.svc
-DNS.4 = app-a.default.svc.cluster.local
+DNS.1 = fake-app-a
+DNS.2 = wrong.domain
+DNS.3 = invalid.service
+DNS.4 = fake-app-a.wrong.domain
 DNS.5 = localhost
 IP.1 = 127.0.0.1
 EOF
@@ -68,7 +68,7 @@ echo ""
 echo "Step 3: Generating App B certificate..."
 openssl genrsa -out app-b-key.pem 2048
 openssl req -new -key app-b-key.pem -out app-b.csr \
-  -subj "/C=US/ST=State/L=City/O=K8S/OU=AppB/CN=app-b.default.svc.cluster.local"
+  -subj "/C=US/ST=State/L=City/O=K8S/OU=AppB/CN=fake-app-b.wrong.domain"
 
 # Create SAN config for App B
 cat > app-b-san.cnf <<EOF
@@ -82,10 +82,10 @@ req_extensions = v3_req
 subjectAltName = @alt_names
 
 [alt_names]
-DNS.1 = app-b
-DNS.2 = app-b.default
-DNS.3 = app-b.default.svc
-DNS.4 = app-b.default.svc.cluster.local
+DNS.1 = fake-app-b
+DNS.2 = wrong.domain
+DNS.3 = invalid.service
+DNS.4 = fake-app-b.wrong.domain
 DNS.5 = localhost
 IP.1 = 127.0.0.1
 EOF
