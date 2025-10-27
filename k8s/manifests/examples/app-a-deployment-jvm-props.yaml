@@ -1,0 +1,261 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-a
+  labels:
+    app: app-a
+    version: jvm-props
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app-a
+  template:
+    metadata:
+      labels:
+        app: app-a
+        version: jvm-props
+    spec:
+      serviceAccountName: app-a
+      initContainers:
+      - name: vault-init
+        image: hashicorp/vault:1.15.4
+        command:
+        - sh
+        - -c
+        - |
+          # Wait for Vault to be ready
+          until wget -q --spider http://vault.default.svc.cluster.local:8200/v1/sys/health; do
+            echo "Waiting for Vault..."
+            sleep 2
+          done
+
+          # Authenticate with Vault using Kubernetes auth
+          KUBE_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          VAULT_TOKEN=$(wget --post-data="{\"jwt\": \"$KUBE_TOKEN\", \"role\": \"app-a\"}" \
+            -O - http://vault.default.svc.cluster.local:8200/v1/auth/kubernetes/login 2>/dev/null | \
+            grep -o '"client_token":"[^"]*' | cut -d'"' -f4)
+
+          if [ -z "$VAULT_TOKEN" ]; then
+            echo "Failed to authenticate with Vault"
+            exit 1
+          fi
+
+          echo "Successfully authenticated with Vault"
+
+          # Retrieve keystore from Vault (base64-encoded)
+          wget --header="X-Vault-Token: $VAULT_TOKEN" \
+            -O - http://vault.default.svc.cluster.local:8200/v1/secret/data/app-a 2>/dev/null | \
+            grep -o '"ssl.keystore":"[^"]*' | cut -d'"' -f4 | \
+            base64 -d > /etc/security/ssl/app-a-keystore.p12
+
+          # Retrieve truststore from Vault (base64-encoded)
+          wget --header="X-Vault-Token: $VAULT_TOKEN" \
+            -O - http://vault.default.svc.cluster.local:8200/v1/secret/data/app-a 2>/dev/null | \
+            grep -o '"ssl.truststore":"[^"]*' | cut -d'"' -f4 | \
+            base64 -d > /etc/security/ssl/truststore.jks
+
+          echo "Certificates retrieved and written to /etc/security/ssl/"
+          ls -lh /etc/security/ssl/
+        volumeMounts:
+        - name: ssl-certs
+          mountPath: /etc/security/ssl
+
+      containers:
+      - name: app-a
+        image: app-a:1.0.0-SNAPSHOT
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8443
+          name: https
+        env:
+        # JVM System Properties for SSL/TLS Configuration
+        # These properties configure the JVM-wide SSL context
+        - name: JAVA_TOOL_OPTIONS
+          value: >-
+            -Djavax.net.ssl.keyStore=/etc/security/ssl/app-a-keystore.p12
+            -Djavax.net.ssl.keyStorePassword=changeit
+            -Djavax.net.ssl.keyStoreType=PKCS12
+            -Djavax.net.ssl.trustStore=/etc/security/ssl/truststore.jks
+            -Djavax.net.ssl.trustStorePassword=changeit
+            -Djavax.net.ssl.trustStoreType=JKS
+
+        # Optional: Enable SSL debugging
+        # - name: JAVA_TOOL_OPTIONS
+        #   value: >-
+        #     -Djavax.net.ssl.keyStore=/etc/security/ssl/app-a-keystore.p12
+        #     -Djavax.net.ssl.keyStorePassword=changeit
+        #     -Djavax.net.ssl.keyStoreType=PKCS12
+        #     -Djavax.net.ssl.trustStore=/etc/security/ssl/truststore.jks
+        #     -Djavax.net.ssl.trustStorePassword=changeit
+        #     -Djavax.net.ssl.trustStoreType=JKS
+        #     -Djavax.net.debug=ssl:handshake:verbose
+
+        volumeMounts:
+        - name: ssl-certs
+          mountPath: /etc/security/ssl
+          readOnly: true
+
+        # Health probes with mTLS authentication
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - curl -k --cert /etc/security/ssl/app-a-keystore.p12:changeit --cert-type P12 https://localhost:8443/health
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - curl -k --cert /etc/security/ssl/app-a-keystore.p12:changeit --cert-type P12 https://localhost:8443/health
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+      volumes:
+      - name: ssl-certs
+        emptyDir: {}
+
+---
+# Example: Using ConfigMap for JVM Options
+# This approach externalizes the JVM configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-a-jvm-config
+  labels:
+    app: app-a
+data:
+  # JVM SSL Properties
+  JAVA_TOOL_OPTIONS: |
+    -Djavax.net.ssl.keyStore=/etc/security/ssl/app-a-keystore.p12
+    -Djavax.net.ssl.keyStorePassword=changeit
+    -Djavax.net.ssl.keyStoreType=PKCS12
+    -Djavax.net.ssl.trustStore=/etc/security/ssl/truststore.jks
+    -Djavax.net.ssl.trustStorePassword=changeit
+    -Djavax.net.ssl.trustStoreType=JKS
+
+  # Optional: JVM Options with SSL Debugging
+  JAVA_TOOL_OPTIONS_DEBUG: |
+    -Djavax.net.ssl.keyStore=/etc/security/ssl/app-a-keystore.p12
+    -Djavax.net.ssl.keyStorePassword=changeit
+    -Djavax.net.ssl.keyStoreType=PKCS12
+    -Djavax.net.ssl.trustStore=/etc/security/ssl/truststore.jks
+    -Djavax.net.ssl.trustStorePassword=changeit
+    -Djavax.net.ssl.trustStoreType=JKS
+    -Djavax.net.debug=ssl:handshake:verbose
+
+---
+# Alternative Deployment Using ConfigMap
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-a-configmap
+  labels:
+    app: app-a
+    version: configmap
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app-a
+      version: configmap
+  template:
+    metadata:
+      labels:
+        app: app-a
+        version: configmap
+    spec:
+      serviceAccountName: app-a
+      initContainers:
+      - name: vault-init
+        image: hashicorp/vault:1.15.4
+        command:
+        - sh
+        - -c
+        - |
+          # Same vault init logic as above
+          until wget -q --spider http://vault.default.svc.cluster.local:8200/v1/sys/health; do
+            echo "Waiting for Vault..."
+            sleep 2
+          done
+
+          KUBE_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          VAULT_TOKEN=$(wget --post-data="{\"jwt\": \"$KUBE_TOKEN\", \"role\": \"app-a\"}" \
+            -O - http://vault.default.svc.cluster.local:8200/v1/auth/kubernetes/login 2>/dev/null | \
+            grep -o '"client_token":"[^"]*' | cut -d'"' -f4)
+
+          if [ -z "$VAULT_TOKEN" ]; then
+            echo "Failed to authenticate with Vault"
+            exit 1
+          fi
+
+          wget --header="X-Vault-Token: $VAULT_TOKEN" \
+            -O - http://vault.default.svc.cluster.local:8200/v1/secret/data/app-a 2>/dev/null | \
+            grep -o '"ssl.keystore":"[^"]*' | cut -d'"' -f4 | \
+            base64 -d > /etc/security/ssl/app-a-keystore.p12
+
+          wget --header="X-Vault-Token: $VAULT_TOKEN" \
+            -O - http://vault.default.svc.cluster.local:8200/v1/secret/data/app-a 2>/dev/null | \
+            grep -o '"ssl.truststore":"[^"]*' | cut -d'"' -f4 | \
+            base64 -d > /etc/security/ssl/truststore.jks
+
+          echo "Certificates retrieved successfully"
+        volumeMounts:
+        - name: ssl-certs
+          mountPath: /etc/security/ssl
+
+      containers:
+      - name: app-a
+        image: app-a:1.0.0-SNAPSHOT
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8443
+          name: https
+
+        # Load JVM options from ConfigMap
+        envFrom:
+        - configMapRef:
+            name: app-a-jvm-config
+
+        volumeMounts:
+        - name: ssl-certs
+          mountPath: /etc/security/ssl
+          readOnly: true
+
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - curl -k --cert /etc/security/ssl/app-a-keystore.p12:changeit --cert-type P12 https://localhost:8443/health
+          initialDelaySeconds: 60
+          periodSeconds: 10
+
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - curl -k --cert /etc/security/ssl/app-a-keystore.p12:changeit --cert-type P12 https://localhost:8443/health
+          initialDelaySeconds: 30
+          periodSeconds: 5
+
+      volumes:
+      - name: ssl-certs
+        emptyDir: {}

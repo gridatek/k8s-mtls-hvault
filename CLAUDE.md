@@ -233,6 +233,15 @@ Both applications use the same SSL configuration pattern in `application.yml`:
 - RestTemplate bean is configured with custom `HttpComponentsClientHttpRequestFactory`
 - This enables mTLS for all outgoing HTTPS requests made by the application
 
+**Alternative: JVM System Properties for SSL/TLS:**
+- The project uses programmatic SSL configuration (above) for flexibility and control
+- Alternative approach: Use JVM system properties (`-Djavax.net.ssl.*`) for simpler, container-friendly configuration
+- JVM properties configure SSL/TLS at the JVM level, applying globally to all connections
+- Example: `-Djavax.net.ssl.keyStore=/etc/security/ssl/app-a-keystore.p12 -Djavax.net.ssl.trustStore=/etc/security/ssl/truststore.jks`
+- Set via `JAVA_TOOL_OPTIONS` environment variable in Kubernetes deployments
+- **See [docs/JVM_SSL_CONFIGURATION.md](docs/JVM_SSL_CONFIGURATION.md) for comprehensive guide with examples**
+- Example manifests available in `k8s/manifests/examples/app-a-deployment-jvm-props.yaml`
+
 **Health Probes and mTLS:**
 - Since `client-auth=need` requires client certificates for ALL HTTPS requests
 - Kubernetes health probes use `exec` commands with curl providing client certificates
