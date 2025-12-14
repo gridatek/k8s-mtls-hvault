@@ -460,6 +460,7 @@ For more detailed information, refer to these documents:
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Detailed architecture and mTLS communication flow
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and debugging steps
 - **[docs/SECURITY.md](docs/SECURITY.md)** - Security best practices and considerations
+- **[docs/PKIX_PATH_BUILDING_ERROR.md](docs/PKIX_PATH_BUILDING_ERROR.md)** - Complete guide to understanding and solving PKIX path building failed errors
 - **[.github/workflows/README.md](.github/workflows/README.md)** - CI/CD workflow details and troubleshooting
 
 ## Monitoring and Visualization
